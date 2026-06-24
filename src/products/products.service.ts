@@ -5,7 +5,10 @@ import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ProductRecord, ProductResult } from './interfaces/product.interface';
 
+/** Numeric amount and ISO currency extracted from a raw price string. */
 type ParsedPrice = { amount: number | null; currency: string };
+
+/** Options passed to the CSV parser when loading the product catalog. */
 type CsvParseOptions = {
   columns: boolean;
   skip_empty_lines: boolean;
@@ -16,6 +19,10 @@ type CsvParseOptions = {
   skip_records_with_error?: boolean;
 };
 
+/**
+ * Loads the product catalog from CSV and performs token-based search with
+ * synonym expansion and relevance scoring.
+ */
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
@@ -35,6 +42,16 @@ export class ProductsService {
 
   constructor(private readonly configService: ConfigService) {}
 
+  /**
+   * Searches the catalog for products most relevant to the given query.
+   *
+   * Scores matches by title, description, and category tokens. When no product
+   * reaches a positive score, returns a fallback set of popular items.
+   *
+   * @param query - Free-text search query from the user or assistant tool.
+   * @param limit - Maximum number of products to return.
+   * @returns Ranked product matches with parsed price metadata.
+   */
   async searchProducts(query: string, limit = 2): Promise<ProductResult[]> {
     await this.ensureProductsLoaded();
 
@@ -79,6 +96,11 @@ export class ProductsService {
       .slice(0, limit);
   }
 
+  /**
+   * Loads the CSV catalog once and caches it in memory for subsequent searches.
+   *
+   * @throws Error when no CSV file can be resolved or parsed.
+   */
   private async ensureProductsLoaded(): Promise<void> {
     if (this.hasLoaded) {
       return;
@@ -117,6 +139,12 @@ export class ProductsService {
     this.logger.log(`Loaded ${this.products.length} products from CSV`);
   }
 
+  /**
+   * Resolves the product CSV path from configuration or known fallback locations.
+   *
+   * @returns Absolute path to an accessible CSV file.
+   * @throws Error when none of the candidate paths exist.
+   */
   private async resolveCsvPath(): Promise<string> {
     const configuredPath = this.configService.get<string>('PRODUCTS_CSV_PATH');
     const candidates = [
@@ -144,6 +172,16 @@ export class ProductsService {
     );
   }
 
+  /**
+   * Computes a relevance score for a product against the normalized query.
+   *
+   * Higher weight is given to full-query matches, exact title tokens, and
+   * category hits; partial token matches receive a lower boost.
+   *
+   * @param product - Catalog record to score.
+   * @param normalizedQuery - Lowercase, accent-stripped full query.
+   * @param queryTokens - Expanded search tokens including synonyms.
+   */
   private scoreProduct(
     product: ProductRecord,
     normalizedQuery: string,
@@ -177,6 +215,13 @@ export class ProductsService {
     return score;
   }
 
+  /**
+   * Ranks fallback products when no direct query match is found.
+   *
+   * Prefers items on sale and products with a parsed numeric price.
+   *
+   * @param product - Scored product candidate.
+   */
   private fallbackRank(product: ProductResult): number {
     const discountBoost = product.description.toLowerCase().includes('sale')
       ? 4
@@ -186,6 +231,11 @@ export class ProductsService {
     return discountBoost + hasPrice + product.score;
   }
 
+  /**
+   * Splits text into lowercase alphanumeric tokens longer than two characters.
+   *
+   * @param text - Input text to tokenize.
+   */
   private tokenize(text: string): string[] {
     return text
       .split(/[^a-z0-9]+/g)
@@ -193,6 +243,11 @@ export class ProductsService {
       .filter((token) => token.length > 2);
   }
 
+  /**
+   * Expands query tokens with configured Spanish/English synonyms.
+   *
+   * @param tokens - Base tokens extracted from the query.
+   */
   private expandTokens(tokens: string[]): string[] {
     const expanded = new Set<string>();
 
@@ -207,12 +262,25 @@ export class ProductsService {
     return [...expanded];
   }
 
+  /**
+   * Checks whether a token partially matches any word in searchable text.
+   *
+   * @param searchableText - Normalized title and description combined.
+   * @param token - Query token to compare.
+   */
   private hasPartialMatch(searchableText: string, token: string): boolean {
     return searchableText
       .split(' ')
       .some((word) => word.startsWith(token) || token.startsWith(word));
   }
 
+  /**
+   * Extracts the first numeric amount and ISO currency code from a price string.
+   *
+   * Defaults to `USD` when no currency code is present.
+   *
+   * @param rawPrice - Raw price value from the CSV row.
+   */
   private parsePrice(rawPrice: string): ParsedPrice {
     const matches = rawPrice?.match(/\d+(\.\d+)?/g) ?? [];
     const amount = matches.length > 0 ? Number(matches[0]) : null;
@@ -224,6 +292,11 @@ export class ProductsService {
     };
   }
 
+  /**
+   * Normalizes text for case-insensitive, accent-insensitive comparisons.
+   *
+   * @param text - Input text to normalize.
+   */
   private normalizeText(text: string): string {
     return text
       .normalize('NFD')

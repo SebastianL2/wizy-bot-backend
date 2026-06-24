@@ -18,6 +18,7 @@ import { ProductsService } from '../products/products.service';
 import { ChatResponseDto } from './dto/chat-response.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 
+/** Product payload returned to the chat client and OpenAI tool results. */
 interface ProductOutput {
   title: string;
   price?: number;
@@ -30,6 +31,7 @@ interface ProductOutput {
   variants?: string;
 }
 
+/** Aggregated result of the OpenAI function-calling loop. */
 interface OpenAiMessageResult {
   content: string;
   totalTokens: number;
@@ -39,16 +41,22 @@ interface OpenAiMessageResult {
   conversions?: CurrencyConversionResult[];
 }
 
+/** Synthetic assistant reply when the model skips product search. */
 interface FallbackResponse {
   message: string;
   products: ProductOutput[];
 }
 
+/** In-memory conversation state keyed by session id. */
 interface SessionState {
   messages: ChatCompletionMessageParam[];
   updatedAt: number;
 }
 
+/**
+ * Orchestrates chat requests with OpenAI function calling, session memory,
+ * product search, and currency conversion.
+ */
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
@@ -116,6 +124,11 @@ export class ChatService {
     }
   ];
 
+  /**
+   * Initializes the OpenAI client from environment configuration.
+   *
+   * @throws ServiceUnavailableException when `OPENAI_API_KEY` is missing.
+   */
   constructor(
     private readonly configService: ConfigService,
     private readonly productsService: ProductsService,
@@ -132,6 +145,16 @@ export class ChatService {
     this.openai = new OpenAI({ apiKey });
   }
 
+  /**
+   * Processes an incoming user message end-to-end.
+   *
+   * Resolves or creates a session, runs the OpenAI tool loop, optionally
+   * converts product prices to a detected target currency, and returns a
+   * structured response for the client.
+   *
+   * @param payload - User message and optional session identifier.
+   * @returns Assistant reply, matched products, conversion data, and metadata.
+   */
   async processMessage(payload: SendMessageDto): Promise<ChatResponseDto> {
     this.logger.log(`Processing chat message: "${payload.message}"`);
 
@@ -196,6 +219,13 @@ export class ChatService {
     }
   }
 
+  /**
+   * Executes the OpenAI chat loop with tool calling until a final answer
+   * is produced or the iteration limit is reached.
+   *
+   * @param messages - Mutable conversation history including the latest user turn.
+   * @returns Assistant content, token usage, executed tools, and structured data.
+   */
   private async runFunctionCallingLoop(
     messages: ChatCompletionMessageParam[]
   ): Promise<OpenAiMessageResult> {
@@ -307,6 +337,11 @@ export class ChatService {
     };
   }
 
+  /**
+   * Returns a trimmed session id or generates a new UUID when absent.
+   *
+   * @param sessionId - Optional client-provided session identifier.
+   */
   private resolveSessionId(sessionId?: string): string {
     if (sessionId && sessionId.trim().length > 0) {
       return sessionId.trim();
@@ -315,6 +350,12 @@ export class ChatService {
     return randomUUID();
   }
 
+  /**
+   * Loads stored conversation history for a session or seeds it with the
+   * system instruction when the session is new.
+   *
+   * @param sessionId - Session identifier.
+   */
   private getSessionMessages(sessionId: string): ChatCompletionMessageParam[] {
     this.cleanupExpiredSessions();
 
@@ -331,6 +372,12 @@ export class ChatService {
     ];
   }
 
+  /**
+   * Persists trimmed conversation history and refreshes the session TTL.
+   *
+   * @param sessionId - Session identifier.
+   * @param messages - Full message history after the current turn.
+   */
   private persistSessionMessages(
     sessionId: string,
     messages: ChatCompletionMessageParam[]
@@ -342,6 +389,12 @@ export class ChatService {
     });
   }
 
+  /**
+   * Keeps the system message and the most recent user/assistant turns within
+   * the configured history limit.
+   *
+   * @param messages - Full conversation history.
+   */
   private trimSessionHistory(
     messages: ChatCompletionMessageParam[]
   ): ChatCompletionMessageParam[] {
@@ -357,6 +410,7 @@ export class ChatService {
     return [systemMessage, ...trimmedConversation];
   }
 
+  /** Removes sessions that exceeded the in-memory TTL. */
   private cleanupExpiredSessions(): void {
     const now = Date.now();
 
@@ -367,6 +421,12 @@ export class ChatService {
     }
   }
 
+  /**
+   * Parses JSON tool arguments sent by the model.
+   *
+   * @param rawArgs - Raw JSON string from the tool call.
+   * @returns Parsed arguments object, or an empty object when invalid.
+   */
   private parseToolArguments(rawArgs: string): Record<string, unknown> {
     try {
       return JSON.parse(rawArgs) as Record<string, unknown>;
@@ -376,6 +436,12 @@ export class ChatService {
     }
   }
 
+  /**
+   * Executes a tool by name with logging and error propagation.
+   *
+   * @param functionName - OpenAI tool name.
+   * @param args - Parsed tool arguments.
+   */
   private async executeTool(
     functionName: string,
     args: Record<string, unknown>
@@ -395,6 +461,14 @@ export class ChatService {
     }
   }
 
+  /**
+   * Dispatches a tool call to the corresponding domain service.
+   *
+   * Supported tools: `searchProducts`, `convertCurrencies`.
+   *
+   * @param functionName - OpenAI tool name.
+   * @param args - Parsed tool arguments.
+   */
   private async runTool(
     functionName: string,
     args: Record<string, unknown>
@@ -425,6 +499,11 @@ export class ChatService {
     };
   }
 
+  /**
+   * Maps internal product search results to the chat response shape.
+   *
+   * @param products - Products returned by {@link ProductsService.searchProducts}.
+   */
   private mapProductsForOutput(products: ProductResult[]): ProductOutput[] {
     return products.map((product) => ({
       title: product.name,
@@ -439,6 +518,12 @@ export class ChatService {
     }));
   }
 
+  /**
+   * Validates and normalizes product data from a tool execution result.
+   *
+   * @param result - Raw tool response payload.
+   * @returns Validated products, or an empty array when the shape is invalid.
+   */
   private extractProductOutput(result: unknown): ProductOutput[] {
     if (!result || typeof result !== 'object') {
       return [];
@@ -495,6 +580,12 @@ export class ChatService {
     return formatted;
   }
 
+  /**
+   * Validates and normalizes currency conversion data from a tool result.
+   *
+   * @param result - Raw tool response payload.
+   * @returns Validated conversion, or `null` when required fields are missing.
+   */
   private extractCurrencyConversion(
     result: unknown
   ): CurrencyConversionResult | null {
@@ -525,6 +616,14 @@ export class ChatService {
     };
   }
 
+  /**
+   * Builds a product suggestion fallback when the model answers without
+   * calling `searchProducts` but the user message looks product-related.
+   *
+   * @param messages - Current conversation history.
+   * @param functionsExecuted - Mutable list of executed tool names.
+   * @returns Fallback reply with products, or `null` when not applicable.
+   */
   private async buildFallbackResponse(
     messages: ChatCompletionMessageParam[],
     functionsExecuted: string[]
@@ -552,6 +651,12 @@ export class ChatService {
     };
   }
 
+  /**
+   * Converts product prices to a target currency detected in the user message.
+   *
+   * @param products - Products returned by the tool loop.
+   * @param targetCurrency - ISO currency code, or `null` to skip conversion.
+   */
   private async convertProductsIfNeeded(
     products: ProductOutput[] | undefined,
     targetCurrency: string | null
@@ -598,6 +703,14 @@ export class ChatService {
     return { products: convertedProducts, conversions };
   }
 
+  /**
+   * Prepends an approximate price range when the user asks a generic price
+   * question and structured products are available.
+   *
+   * @param userMessage - Original user input.
+   * @param baseMessage - Assistant message after normalization.
+   * @param products - Structured products for the response.
+   */
   private buildFinalMessage(
     userMessage: string,
     baseMessage: string,
@@ -629,6 +742,12 @@ export class ChatService {
     return `Great question. Based on our current catalog, similar items are usually around ${rangeText}.\n${baseMessage}`;
   }
 
+  /**
+   * Determines whether the response should include an approximate price range.
+   *
+   * @param userMessage - Original user input.
+   * @param products - Structured products for the response.
+   */
   private shouldIncludeApproximateRangeIntro(
     userMessage: string,
     products: ProductOutput[] | undefined
@@ -644,6 +763,12 @@ export class ChatService {
     return asksPrice && looksGeneric;
   }
 
+  /**
+   * Detects a target currency code from natural language or ISO aliases.
+   *
+   * @param message - User message to inspect.
+   * @returns ISO currency code in uppercase, or `null` when not detected.
+   */
   private detectRequestedCurrency(message: string): string | null {
     const normalized = message.toLowerCase();
     const directCode = normalized.match(/\b(usd|eur|cop|cad|mxn|gbp)\b/);
@@ -669,6 +794,11 @@ export class ChatService {
     return null;
   }
 
+  /**
+   * Returns the most recent plain-text user message from the conversation.
+   *
+   * @param messages - Conversation history.
+   */
   private getLatestUserMessage(messages: ChatCompletionMessageParam[]): string {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
@@ -684,6 +814,11 @@ export class ChatService {
     return '';
   }
 
+  /**
+   * Checks whether a message should trigger a forced product search fallback.
+   *
+   * @param message - User message to inspect.
+   */
   private shouldForceProductSuggestions(message: string): boolean {
     const normalized = message.toLowerCase();
     const productIntentPattern =
@@ -694,6 +829,13 @@ export class ChatService {
     return productIntentPattern.test(normalized) && !pureConversionPattern.test(normalized);
   }
 
+  /**
+   * Clears stored conversation history for a session.
+   *
+   * @param sessionId - Session identifier to reset.
+   * @returns `true` when a session existed and was deleted, otherwise `false`.
+   * @throws BadRequestException when `sessionId` is empty.
+   */
   resetSession(sessionId: string): boolean {
     const normalized = sessionId.trim();
     if (!normalized) {
@@ -703,6 +845,13 @@ export class ChatService {
     return this.sessionStore.delete(normalized);
   }
 
+  /**
+   * Removes duplicated product listings from the assistant text when products
+   * are already returned in the structured `products` field.
+   *
+   * @param message - Raw assistant message from the model.
+   * @param products - Structured products attached to the response.
+   */
   private normalizeMessageForStructuredProducts(
     message: string,
     products: ProductOutput[] | undefined

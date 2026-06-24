@@ -11,11 +11,16 @@ import {
   ExchangeRatesResponse
 } from './interfaces/exchange-rates.interface';
 
+/** Cached exchange-rate payload with fetch timestamp. */
 interface RatesCache {
   fetchedAt: number;
   payload: ExchangeRatesResponse;
 }
 
+/**
+ * Converts amounts between supported currencies using Open Exchange Rates
+ * with in-memory caching and stale-cache fallback.
+ */
 @Injectable()
 export class CurrencyService {
   private readonly logger = new Logger(CurrencyService.name);
@@ -28,6 +33,19 @@ export class CurrencyService {
 
   constructor(private readonly configService: ConfigService) {}
 
+  /**
+   * Converts an amount from one currency to another using latest exchange rates.
+   *
+   * Rates are fetched from Open Exchange Rates (USD base) and may be served
+   * from cache when the live API is unavailable.
+   *
+   * @param amount - Positive numeric amount to convert.
+   * @param from - Source currency code (case-insensitive).
+   * @param to - Target currency code (case-insensitive).
+   * @returns Conversion result including rate, converted amount, and stale flag.
+   * @throws BadRequestException when amount is invalid or a currency is unsupported.
+   * @throws ServiceUnavailableException when rates cannot be fetched and no cache exists.
+   */
   async convertCurrencies(
     amount: number,
     from: string,
@@ -68,6 +86,14 @@ export class CurrencyService {
     };
   }
 
+  /**
+   * Returns fresh or cached exchange rates, retrying failed API calls.
+   *
+   * Uses a one-hour in-memory cache. When all retries fail, returns stale
+   * cached data if available.
+   *
+   * @throws ServiceUnavailableException when live fetch fails and cache is empty.
+   */
   private async getExchangeRates(): Promise<{
     payload: ExchangeRatesResponse;
     stale: boolean;
@@ -108,6 +134,14 @@ export class CurrencyService {
     return this.handleRatesFailure();
   }
 
+  /**
+   * Handles exchange-rate fetch failures after retries are exhausted.
+   *
+   * Falls back to stale cache when possible; otherwise throws an HTTP 503 error.
+   *
+   * @param error - Optional underlying request error.
+   * @throws ServiceUnavailableException when no cached rates are available.
+   */
   private handleRatesFailure(
     error?: unknown
   ): Promise<{ payload: ExchangeRatesResponse; stale: boolean }> {
