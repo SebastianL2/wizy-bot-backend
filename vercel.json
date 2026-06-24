@@ -1,7 +1,0 @@
-{
-  "functions": {
-    "src/main.ts": {
-      "includeFiles": "full_stack_test_products_list_rmk.csv"
-    }
-  }
-}

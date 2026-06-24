@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { parse } from 'csv-parse/sync';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ProductRecord, ProductResult } from './interfaces/product.interface';
 
@@ -84,9 +84,7 @@ export class ProductsService {
       return;
     }
 
-    const csvPath =
-      this.configService.get<string>('PRODUCTS_CSV_PATH') ??
-      join(process.cwd(), 'Full Stack Test products_list.csv');
+    const csvPath = await this.resolveCsvPath();
 
     const csvData = await readFile(csvPath, 'utf8');
     const defaultOptions: CsvParseOptions = {
@@ -117,6 +115,33 @@ export class ProductsService {
     this.products = parsed;
     this.hasLoaded = true;
     this.logger.log(`Loaded ${this.products.length} products from CSV`);
+  }
+
+  private async resolveCsvPath(): Promise<string> {
+    const configuredPath = this.configService.get<string>('PRODUCTS_CSV_PATH');
+    const candidates = [
+      configuredPath,
+      join(process.cwd(), 'full_stack_test_products_list_rmk.csv'),
+      join(process.cwd(), 'Full Stack Test products_list.csv'),
+      join(__dirname, '../../full_stack_test_products_list_rmk.csv'),
+      join(__dirname, '../../Full Stack Test products_list.csv'),
+      join(__dirname, '../../../full_stack_test_products_list_rmk.csv'),
+      join(__dirname, '../../../Full Stack Test products_list.csv')
+    ].filter((path): path is string => Boolean(path && path.trim().length > 0));
+
+    for (const candidate of candidates) {
+      try {
+        await access(candidate);
+        this.logger.debug(`Using products CSV path: ${candidate}`);
+        return candidate;
+      } catch {
+        continue;
+      }
+    }
+
+    throw new Error(
+      `Products CSV file not found. Checked: ${candidates.join(', ')}`
+    );
   }
 
   private scoreProduct(
