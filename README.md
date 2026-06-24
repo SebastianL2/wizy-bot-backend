@@ -66,7 +66,14 @@ npm run start:dev
 
 ```json
 {
-  "response": "string",
+  "message": "string",
+  "products": [
+    {
+      "title": "iPhone 12",
+      "price": 900,
+      "currency": "USD"
+    }
+  ],
   "metadata": {
     "totalTokens": 120,
     "functionsExecuted": ["searchProducts"],

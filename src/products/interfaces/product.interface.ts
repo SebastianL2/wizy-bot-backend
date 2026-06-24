@@ -13,9 +13,14 @@ export interface ProductRecord {
 export interface ProductResult {
   name: string;
   description: string;
+  embeddingText: string;
+  url: string;
+  imageUrl: string;
   price: string;
   priceAmount: number | null;
   currency: string;
   productType: string;
+  discount: string;
+  variants: string;
   score: number;
 }

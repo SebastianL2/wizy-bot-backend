@@ -48,10 +48,15 @@ export class ProductsService {
       return {
         name: product.displayTitle,
         description: product.embeddingText,
+        embeddingText: product.embeddingText,
+        url: product.url,
+        imageUrl: product.imageUrl,
         price: product.price,
         priceAmount: parsedPrice.amount,
         currency: parsedPrice.currency,
         productType: product.productType,
+        discount: product.discount,
+        variants: product.variants,
         score
       };
     });

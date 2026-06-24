@@ -10,7 +10,7 @@ describe('ChatController (integration)', () => {
 
   const chatServiceMock = {
     processMessage: jest.fn().mockResolvedValue({
-      response: 'Respuesta de prueba',
+      message: 'Respuesta de prueba',
       metadata: {
         totalTokens: 42,
         functionsExecuted: ['searchProducts']
@@ -47,7 +47,7 @@ describe('ChatController (integration)', () => {
       .send({ message: 'hola' })
       .expect(200);
 
-    expect(response.body.response).toBe('Respuesta de prueba');
+    expect(response.body.message).toBe('Respuesta de prueba');
   });
 
   it('POST /api/chat validates input payload', async () => {

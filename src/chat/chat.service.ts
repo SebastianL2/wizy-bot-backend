@@ -10,16 +10,37 @@ import {
   ChatCompletionTool
 } from 'openai/resources/chat/completions';
 import { randomUUID } from 'node:crypto';
+import { CurrencyConversionResult } from '../currency/interfaces/exchange-rates.interface';
+import { ProductResult } from '../products/interfaces/product.interface';
 import { CurrencyService } from '../currency/currency.service';
 import { ProductsService } from '../products/products.service';
 import { ChatResponseDto } from './dto/chat-response.dto';
 import { SendMessageDto } from './dto/send-message.dto';
+
+interface ProductOutput {
+  title: string;
+  price?: number;
+  currency: string;
+  embeddingText?: string;
+  url?: string;
+  imageUrl?: string;
+  productType?: string;
+  discount?: string;
+  variants?: string;
+}
 
 interface OpenAiMessageResult {
   content: string;
   totalTokens: number;
   functionsExecuted: string[];
   messages: ChatCompletionMessageParam[];
+  products?: ProductOutput[];
+  conversions?: CurrencyConversionResult[];
+}
+
+interface FallbackResponse {
+  message: string;
+  products: ProductOutput[];
 }
 
 interface SessionState {
@@ -113,8 +134,19 @@ export class ChatService {
 
       this.persistSessionMessages(sessionId, result.messages);
 
+      const conversion =
+        result.conversions && result.conversions.length === 1
+          ? result.conversions[0]
+          : undefined;
+
       return {
-        response: result.content,
+        message: result.content,
+        products: result.products,
+        conversion,
+        conversions:
+          result.conversions && result.conversions.length > 1
+            ? result.conversions
+            : undefined,
         metadata: {
           totalTokens: result.totalTokens,
           functionsExecuted: result.functionsExecuted,
@@ -138,6 +170,8 @@ export class ChatService {
   ): Promise<OpenAiMessageResult> {
     let totalTokens = 0;
     const functionsExecuted: string[] = [];
+    let structuredProducts: ProductOutput[] | undefined;
+    const structuredConversions: CurrencyConversionResult[] = [];
 
     for (let iteration = 1; iteration <= this.maxIterations; iteration += 1) {
       this.logger.debug(
@@ -170,14 +204,17 @@ export class ChatService {
         if (fallbackResponse) {
           messages[messages.length - 1] = {
             role: 'assistant',
-            content: fallbackResponse
+            content: fallbackResponse.message
           };
 
           return {
-            content: fallbackResponse,
+            content: fallbackResponse.message,
             totalTokens,
             functionsExecuted,
-            messages
+            messages,
+            products: fallbackResponse.products,
+            conversions:
+              structuredConversions.length > 0 ? structuredConversions : undefined
           };
         }
 
@@ -187,7 +224,10 @@ export class ChatService {
             'I could not understand your request. Try asking for a product search or currency conversion.',
           totalTokens,
           functionsExecuted,
-          messages
+          messages,
+          products: structuredProducts,
+          conversions:
+            structuredConversions.length > 0 ? structuredConversions : undefined
         };
       }
 
@@ -202,6 +242,21 @@ export class ChatService {
         const result = await this.executeTool(functionName, args);
 
         functionsExecuted.push(functionName);
+
+        if (functionName === 'searchProducts') {
+          const parsedProducts = this.extractProductOutput(result);
+          if (parsedProducts.length > 0) {
+            structuredProducts = parsedProducts;
+          }
+        }
+
+        if (functionName === 'convertCurrencies') {
+          const conversion = this.extractCurrencyConversion(result);
+          if (conversion) {
+            structuredConversions.push(conversion);
+          }
+        }
+
         messages.push({
           role: 'tool',
           tool_call_id: toolCall.id,
@@ -215,7 +270,9 @@ export class ChatService {
         'I could not complete the request after several attempts. Please try again with a clearer message.',
       totalTokens,
       functionsExecuted,
-      messages
+      messages,
+      products: structuredProducts,
+      conversions: structuredConversions.length > 0 ? structuredConversions : undefined
     };
   }
 
@@ -321,13 +378,7 @@ export class ChatService {
       }
 
       return {
-        products: products.map((product) => ({
-          name: product.name,
-          description: product.description,
-          price: product.price,
-          priceAmount: product.priceAmount,
-          currency: product.currency
-        }))
+        products: this.mapProductsForOutput(products)
       };
     }
 
@@ -343,10 +394,110 @@ export class ChatService {
     };
   }
 
+  private mapProductsForOutput(products: ProductResult[]): ProductOutput[] {
+    return products.map((product) => ({
+      title: product.name,
+      price: product.priceAmount ?? undefined,
+      currency: product.currency,
+      embeddingText: product.embeddingText,
+      url: product.url,
+      imageUrl: product.imageUrl,
+      productType: product.productType,
+      discount: product.discount,
+      variants: product.variants
+    }));
+  }
+
+  private extractProductOutput(result: unknown): ProductOutput[] {
+    if (!result || typeof result !== 'object') {
+      return [];
+    }
+
+    const maybeProducts = (result as { products?: unknown }).products;
+    if (!Array.isArray(maybeProducts)) {
+      return [];
+    }
+
+    const formatted: ProductOutput[] = [];
+
+    for (const entry of maybeProducts) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+
+      const product = entry as {
+        title?: unknown;
+        price?: unknown;
+        currency?: unknown;
+        embeddingText?: unknown;
+        url?: unknown;
+        imageUrl?: unknown;
+        productType?: unknown;
+        discount?: unknown;
+        variants?: unknown;
+      };
+
+      if (typeof product.title !== 'string' || typeof product.currency !== 'string') {
+        continue;
+      }
+
+      formatted.push({
+        title: product.title,
+        price: typeof product.price === 'number' ? product.price : undefined,
+        currency: product.currency,
+        embeddingText:
+          typeof product.embeddingText === 'string'
+            ? product.embeddingText
+            : undefined,
+        url: typeof product.url === 'string' ? product.url : undefined,
+        imageUrl:
+          typeof product.imageUrl === 'string' ? product.imageUrl : undefined,
+        productType:
+          typeof product.productType === 'string' ? product.productType : undefined,
+        discount:
+          typeof product.discount === 'string' ? product.discount : undefined,
+        variants:
+          typeof product.variants === 'string' ? product.variants : undefined
+      });
+    }
+
+    return formatted;
+  }
+
+  private extractCurrencyConversion(
+    result: unknown
+  ): CurrencyConversionResult | null {
+    if (!result || typeof result !== 'object') {
+      return null;
+    }
+
+    const conversion = result as Partial<CurrencyConversionResult>;
+    if (
+      typeof conversion.amount !== 'number' ||
+      typeof conversion.from !== 'string' ||
+      typeof conversion.to !== 'string' ||
+      typeof conversion.convertedAmount !== 'number' ||
+      typeof conversion.rate !== 'number' ||
+      typeof conversion.stale !== 'boolean'
+    ) {
+      return null;
+    }
+
+    return {
+      amount: conversion.amount,
+      from: conversion.from,
+      to: conversion.to,
+      convertedAmount: conversion.convertedAmount,
+      rate: conversion.rate,
+      stale: conversion.stale,
+      message: conversion.message
+    };
+  }
+
   private async buildFallbackResponse(
     messages: ChatCompletionMessageParam[],
     functionsExecuted: string[]
-  ): Promise<string | null> {
+  ): Promise<FallbackResponse | null> {
     if (functionsExecuted.includes('searchProducts')) {
       return null;
     }
@@ -361,16 +512,13 @@ export class ChatService {
       return null;
     }
     functionsExecuted.push('searchProducts');
+    const productOutputs = this.mapProductsForOutput(products);
 
-    const lines = products.map((product, index) => {
-      return `${index + 1}. ${product.name} - ${product.price}. ${product.description}`;
-    });
-
-    return [
-      'I found these options for you:',
-      ...lines,
-      'Would you like something more specific (brand, budget, color, or category)?'
-    ].join('\n');
+    return {
+      message:
+        'I found these options for you. Would you like something more specific (brand, budget, color, or category)?',
+      products: productOutputs
+    };
   }
 
   private getLatestUserMessage(messages: ChatCompletionMessageParam[]): string {
