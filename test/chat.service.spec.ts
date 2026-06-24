@@ -74,10 +74,15 @@ describe('ChatService', () => {
         {
           name: 'iPhone 12',
           description: 'smartphone',
+          embeddingText: 'iPhone 12 smartphone',
+          url: 'https://example.com/iphone-12',
+          imageUrl: 'https://example.com/iphone-12.png',
           price: '900.0 USD',
           priceAmount: 900,
           currency: 'USD',
           productType: 'Technology',
+          discount: '1',
+          variants: 'Capacity (64gb, 128gb)',
           score: 10
         }
       ])
@@ -95,7 +100,18 @@ describe('ChatService', () => {
       message: 'Busco un iphone'
     });
 
-    expect(result.response).toContain('iPhone 12');
+    expect(result.message).toContain('iPhone 12');
+    expect(result.products?.[0]).toEqual({
+      title: 'iPhone 12',
+      price: 900,
+      currency: 'USD',
+      embeddingText: 'iPhone 12 smartphone',
+      url: 'https://example.com/iphone-12',
+      imageUrl: 'https://example.com/iphone-12.png',
+      productType: 'Technology',
+      discount: '1',
+      variants: 'Capacity (64gb, 128gb)'
+    });
     expect(productsService.searchProducts).toHaveBeenCalledWith('iphone', 2);
     expect(result.metadata?.functionsExecuted).toContain('searchProducts');
   });
