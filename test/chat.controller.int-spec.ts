@@ -15,7 +15,8 @@ describe('ChatController (integration)', () => {
         totalTokens: 42,
         functionsExecuted: ['searchProducts']
       }
-    })
+    }),
+    resetSession: jest.fn().mockReturnValue(true)
   };
 
   beforeAll(async () => {
@@ -55,5 +56,13 @@ describe('ChatController (integration)', () => {
       .post('/api/chat')
       .send({ message: '' })
       .expect(400);
+  });
+
+  it('DELETE /api/chat/:sessionId resets session', async () => {
+    const response = await request(app.getHttpServer())
+      .delete('/api/chat/test-session')
+      .expect(200);
+
+    expect(response.body.message).toContain('reset successfully');
   });
 });

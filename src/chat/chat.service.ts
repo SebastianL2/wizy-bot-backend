@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   Logger,
   ServiceUnavailableException
@@ -58,12 +59,13 @@ export class ChatService {
   private readonly sessionTtlMs = 60 * 60 * 1000;
   private readonly sessionStore = new Map<string, SessionState>();
   private readonly systemInstruction = [
-    'You are an e-commerce assistant that must use function calling.',
+    'You are a warm and proactive customer service assistant for an e-commerce store that must use function calling.',
     'Use searchProducts directly for product discovery queries without asking unnecessary clarifying questions.',
     'If the user request is generic or underspecified, always provide 2 relevant products first and then ask whether they want something more specific.',
     'When user asks for product price in another currency, first fetch 2 relevant products with searchProducts and then convert each price with convertCurrencies when numeric prices are available.',
     'When user asks pure currency conversion with explicit amount and currencies (e.g. "How many Canadian Dollars are 350 Euros"), call convertCurrencies directly.',
     'For generic price questions without a target currency (e.g. "How much does a watch cost?"), do not convert; return catalog prices as-is for 2 relevant products and ask for specificity.',
+    'Always keep a customer-service tone: clear, friendly, and solution-oriented.',
     'Avoid empty responses and avoid saying you cannot help before trying tools.'
   ].join(' ');
 
@@ -133,19 +135,38 @@ export class ChatService {
       const result = await this.runFunctionCallingLoop(messages);
 
       this.persistSessionMessages(sessionId, result.messages);
+      const requestedCurrency = this.detectRequestedCurrency(payload.message);
+      const convertedProducts = await this.convertProductsIfNeeded(
+        result.products,
+        requestedCurrency
+      );
+      const products = convertedProducts.products;
+      const normalizedMessage = this.normalizeMessageForStructuredProducts(
+        result.content,
+        products
+      );
+      const combinedConversions = [
+        ...(result.conversions ?? []),
+        ...convertedProducts.conversions
+      ];
+      const finalMessage = this.buildFinalMessage(
+        payload.message,
+        normalizedMessage,
+        products
+      );
 
       const conversion =
-        result.conversions && result.conversions.length === 1
-          ? result.conversions[0]
+        combinedConversions.length === 1
+          ? combinedConversions[0]
           : undefined;
 
       return {
-        message: result.content,
-        products: result.products,
+        message: finalMessage,
+        products,
         conversion,
         conversions:
-          result.conversions && result.conversions.length > 1
-            ? result.conversions
+          combinedConversions.length > 1
+            ? combinedConversions
             : undefined,
         metadata: {
           totalTokens: result.totalTokens,
@@ -516,9 +537,127 @@ export class ChatService {
 
     return {
       message:
-        'I found these options for you. Would you like something more specific (brand, budget, color, or category)?',
+        'Thanks for reaching out. I found these options for you. Would you like something more specific (brand, budget, color, or category)?',
       products: productOutputs
     };
+  }
+
+  private async convertProductsIfNeeded(
+    products: ProductOutput[] | undefined,
+    targetCurrency: string | null
+  ): Promise<{
+    products: ProductOutput[] | undefined;
+    conversions: CurrencyConversionResult[];
+  }> {
+    if (!products || products.length === 0 || !targetCurrency) {
+      return { products, conversions: [] };
+    }
+
+    const conversions: CurrencyConversionResult[] = [];
+    const convertedProducts: ProductOutput[] = [];
+
+    for (const product of products) {
+      if (
+        typeof product.price !== 'number' ||
+        !Number.isFinite(product.price) ||
+        product.price < 0
+      ) {
+        convertedProducts.push(product);
+        continue;
+      }
+
+      const sourceCurrency = product.currency.toUpperCase();
+      if (sourceCurrency === targetCurrency) {
+        convertedProducts.push(product);
+        continue;
+      }
+
+      const conversion = await this.currencyService.convertCurrencies(
+        product.price,
+        sourceCurrency,
+        targetCurrency
+      );
+      conversions.push(conversion);
+      convertedProducts.push({
+        ...product,
+        price: conversion.convertedAmount,
+        currency: targetCurrency
+      });
+    }
+
+    return { products: convertedProducts, conversions };
+  }
+
+  private buildFinalMessage(
+    userMessage: string,
+    baseMessage: string,
+    products: ProductOutput[] | undefined
+  ): string {
+    if (
+      !this.shouldIncludeApproximateRangeIntro(userMessage, products) ||
+      !products ||
+      products.length === 0
+    ) {
+      return baseMessage;
+    }
+
+    const prices = products
+      .map((product) => product.price)
+      .filter((value): value is number => typeof value === 'number');
+    if (prices.length === 0) {
+      return baseMessage;
+    }
+
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const currency = products[0].currency;
+    const rangeText =
+      minPrice === maxPrice
+        ? `${minPrice.toFixed(2)} ${currency}`
+        : `${minPrice.toFixed(2)} - ${maxPrice.toFixed(2)} ${currency}`;
+
+    return `Great question. Based on our current catalog, similar items are usually around ${rangeText}.\n${baseMessage}`;
+  }
+
+  private shouldIncludeApproximateRangeIntro(
+    userMessage: string,
+    products: ProductOutput[] | undefined
+  ): boolean {
+    if (!products || products.length === 0) {
+      return false;
+    }
+
+    const normalized = userMessage.toLowerCase();
+    const asksPrice = /(price|cost|how much|cu[aá]nto)/.test(normalized);
+    const hasTargetCurrency = this.detectRequestedCurrency(userMessage) !== null;
+    const looksGeneric = !/\d/.test(normalized);
+
+    return asksPrice && hasTargetCurrency && looksGeneric;
+  }
+
+  private detectRequestedCurrency(message: string): string | null {
+    const normalized = message.toLowerCase();
+    const directCode = normalized.match(/\b(usd|eur|cop|cad|mxn|gbp)\b/);
+    if (directCode?.[1]) {
+      return directCode[1].toUpperCase();
+    }
+
+    const aliases: Array<{ pattern: RegExp; code: string }> = [
+      { pattern: /\b(euro|euros)\b/, code: 'EUR' },
+      { pattern: /\b(canadian dollar|canadian dollars|cad)\b/, code: 'CAD' },
+      { pattern: /\b(colombian peso|colombian pesos|peso colombiano|pesos colombianos)\b/, code: 'COP' },
+      { pattern: /\b(us dollar|us dollars|dollar|dollars)\b/, code: 'USD' },
+      { pattern: /\b(pound|pounds|sterling|libra|libras)\b/, code: 'GBP' },
+      { pattern: /\b(mexican peso|mexican pesos|peso mexicano|pesos mexicanos)\b/, code: 'MXN' }
+    ];
+
+    for (const alias of aliases) {
+      if (alias.pattern.test(normalized)) {
+        return alias.code;
+      }
+    }
+
+    return null;
   }
 
   private getLatestUserMessage(messages: ChatCompletionMessageParam[]): string {
@@ -544,5 +683,44 @@ export class ChatService {
       /(how many|convert|exchange).*\d+.*(usd|eur|cop|cad|mxn|gbp)/;
 
     return productIntentPattern.test(normalized) && !pureConversionPattern.test(normalized);
+  }
+
+  resetSession(sessionId: string): boolean {
+    const normalized = sessionId.trim();
+    if (!normalized) {
+      throw new BadRequestException('sessionId cannot be empty');
+    }
+
+    return this.sessionStore.delete(normalized);
+  }
+
+  private normalizeMessageForStructuredProducts(
+    message: string,
+    products: ProductOutput[] | undefined
+  ): string {
+    if (!products || products.length === 0) {
+      return message;
+    }
+
+    const titles = products.map((product) => product.title.toLowerCase());
+    const lines = message
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    const filtered = lines.filter((line) => {
+      const normalized = line.toLowerCase();
+      const looksLikeNumberedItem = /^\d+[\).\:-]/.test(normalized);
+      const hasProductTitle = titles.some((title) => normalized.includes(title));
+      const hasPriceSnippet = /\d+([.,]\d+)?\s*(usd|eur|cop|cad|mxn|gbp)\b/i.test(line);
+
+      return !looksLikeNumberedItem && !hasProductTitle && !hasPriceSnippet;
+    });
+
+    if (filtered.length > 0) {
+      return filtered.join('\n');
+    }
+
+    return 'Here are two options that could work for you.';
   }
 }

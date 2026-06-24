@@ -84,6 +84,18 @@ npm run start:dev
 
 Reuse the same `sessionId` value in the next request to continue the same conversation.
 
+## Reset Session Endpoint
+
+- Method: `DELETE`
+- URL: `http://localhost:3000/api/chat/:sessionId`
+- Purpose: manually clear stored conversation history for that session
+
+Example:
+
+```bash
+curl -X DELETE http://localhost:3000/api/chat/f17d7ad1-9c25-4ec8-892e-09f46f2f9af6
+```
+
 ## cURL Examples
 
 ```bash

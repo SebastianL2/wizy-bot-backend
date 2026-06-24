@@ -1,10 +1,11 @@
-import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Delete, HttpCode, Param, Post } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBody,
   ApiInternalServerErrorResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiParam,
   ApiTags
 } from '@nestjs/swagger';
 import { ChatService } from './chat.service';
@@ -47,5 +48,27 @@ export class ChatController {
   })
   async chat(@Body() payload: SendMessageDto): Promise<ChatResponseDto> {
     return this.chatService.processMessage(payload);
+  }
+
+  @Delete(':sessionId')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Reset a chat session manually' })
+  @ApiParam({
+    name: 'sessionId',
+    description: 'Session id to reset conversation history'
+  })
+  @ApiOkResponse({
+    description: 'Session reset result'
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid session id'
+  })
+  resetSession(@Param('sessionId') sessionId: string): { message: string } {
+    const wasReset = this.chatService.resetSession(sessionId);
+    if (wasReset) {
+      return { message: `Session ${sessionId} reset successfully.` };
+    }
+
+    return { message: `Session ${sessionId} did not exist or was already empty.` };
   }
 }

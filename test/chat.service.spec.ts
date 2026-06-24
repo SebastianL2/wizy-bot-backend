@@ -84,12 +84,33 @@ describe('ChatService', () => {
           discount: '1',
           variants: 'Capacity (64gb, 128gb)',
           score: 10
+        },
+        {
+          name: 'iPhone 13',
+          description: 'smartphone',
+          embeddingText: 'iPhone 13 smartphone',
+          url: 'https://example.com/iphone-13',
+          imageUrl: 'https://example.com/iphone-13.png',
+          price: '1099.0 USD',
+          priceAmount: 1099,
+          currency: 'USD',
+          productType: 'Technology',
+          discount: '0',
+          variants: 'Capacity (128gb, 256gb)',
+          score: 9
         }
       ])
     } as unknown as jest.Mocked<ProductsService>;
 
     currencyService = {
-      convertCurrencies: jest.fn()
+      convertCurrencies: jest.fn().mockImplementation(async (amount, from, to) => ({
+        amount,
+        from,
+        to,
+        convertedAmount: Number((amount * 0.91).toFixed(2)),
+        rate: 0.91,
+        stale: false
+      }))
     } as unknown as jest.Mocked<CurrencyService>;
 
     service = new ChatService(configService, productsService, currencyService);
@@ -100,7 +121,8 @@ describe('ChatService', () => {
       message: 'Busco un iphone'
     });
 
-    expect(result.message).toContain('iPhone 12');
+    expect(result.message.length).toBeGreaterThan(0);
+    expect(result.message).not.toContain('iPhone 12');
     expect(result.products?.[0]).toEqual({
       title: 'iPhone 12',
       price: 900,
@@ -114,5 +136,15 @@ describe('ChatService', () => {
     });
     expect(productsService.searchProducts).toHaveBeenCalledWith('iphone', 2);
     expect(result.metadata?.functionsExecuted).toContain('searchProducts');
+  });
+
+  it('converts product prices to requested currency and adds approximate range intro', async () => {
+    const result = await service.processMessage({
+      message: 'What is the price of the watch in Euros'
+    });
+
+    expect(currencyService.convertCurrencies).toHaveBeenCalled();
+    expect(result.products?.every((product) => product.currency === 'EUR')).toBe(true);
+    expect(result.message).toContain('similar items are usually around');
   });
 });
