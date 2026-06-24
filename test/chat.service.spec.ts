@@ -147,4 +147,14 @@ describe('ChatService', () => {
     expect(result.products?.every((product) => product.currency === 'EUR')).toBe(true);
     expect(result.message).toContain('similar items are usually around');
   });
+
+  it('adds approximate range intro for generic price question without currency', async () => {
+    const result = await service.processMessage({
+      message: 'How much does a watch costs?'
+    });
+
+    expect(currencyService.convertCurrencies).not.toHaveBeenCalled();
+    expect(result.message).toContain('similar items are usually around');
+    expect(result.products?.length).toBeGreaterThanOrEqual(1);
+  });
 });

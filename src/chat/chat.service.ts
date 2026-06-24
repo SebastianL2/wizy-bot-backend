@@ -64,7 +64,7 @@ export class ChatService {
     'If the user request is generic or underspecified, always provide 2 relevant products first and then ask whether they want something more specific.',
     'When user asks for product price in another currency, first fetch 2 relevant products with searchProducts and then convert each price with convertCurrencies when numeric prices are available.',
     'When user asks pure currency conversion with explicit amount and currencies (e.g. "How many Canadian Dollars are 350 Euros"), call convertCurrencies directly.',
-    'For generic price questions without a target currency (e.g. "How much does a watch cost?"), do not convert; return catalog prices as-is for 2 relevant products and ask for specificity.',
+    'For generic price questions without a target currency (e.g. "How much does a watch cost?"), provide an approximate price range based on the relevant catalog products, do not convert currency, and then show 2 products.',
     'Always keep a customer-service tone: clear, friendly, and solution-oriented.',
     'Avoid empty responses and avoid saying you cannot help before trying tools.'
   ].join(' ');
@@ -629,10 +629,9 @@ export class ChatService {
 
     const normalized = userMessage.toLowerCase();
     const asksPrice = /(price|cost|how much|cu[aá]nto)/.test(normalized);
-    const hasTargetCurrency = this.detectRequestedCurrency(userMessage) !== null;
     const looksGeneric = !/\d/.test(normalized);
 
-    return asksPrice && hasTargetCurrency && looksGeneric;
+    return asksPrice && looksGeneric;
   }
 
   private detectRequestedCurrency(message: string): string | null {
