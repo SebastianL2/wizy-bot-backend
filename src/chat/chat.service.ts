@@ -58,6 +58,15 @@ export class ChatService {
   private readonly maxSessionHistoryMessages = 30;
   private readonly sessionTtlMs = 60 * 60 * 1000;
   private readonly sessionStore = new Map<string, SessionState>();
+  private readonly recipientRecommendationGuide = [
+    'Recipient recommendation guide (use this when user asks products for someone like dad, mom, aunt, sister, kids, etc.):',
+    'HOMBRE: Men\'s Comfy Memory Foam Slide Slippers; IRON Clothing Men\'s Yukon Stretch Twill Flat Front Short; George Men\'s Pique Polo Shirts (2-Pack).',
+    'MUJER: Time and Tru Women\'s Tall Slouch Boots; Luv Betsey By Betsey Johnson Women\'s Ruffle Tiered Dress; POPYOUNG Womens Summer Casual Tank Tops; Racerback Tank Tops for women; NELEUS Womens 4 High Waist Athletic Running Shorts; Eytino One Piece Bathing Suit for Women; Women\'s Plus Size Ruffled V-Neck Top; Womens Having A Weird Mom Builds Character Tshirt; Women\'s Short Sleeve Slub Crew T-Shirt; Women\'s Long Sleeve High Leg Rash Guard One Piece Swimsuit; Women\'s Low Chunky Lug Fashion Sneakers; Summer Tank Tops for Women V-neck Sleeveless Shirts (both listings); Smurfette Sassy Classy Smurf Women\'s Graphic T Shirt; Women\'s Studded Heeled Moto Boots; Cueply Womens Plus Size Tops Short Sleeve V Neck; Jordache Womens Boyfriend Short With Rolled Cuff Hem; Time and Tru Women\'s Short Sleeve Tiered Knit Dress; Female Carmen Shoulder Bag Multi Snake Pink; Women\'s Athletic Ankle Socks; Women\'s Summer Casual T-shirt; Maybelline and makeup items (mascara, eyeliner, eyeshadow).',
+    'NINOS/NINAS: NEWTZ Little & Big Boys Water Shoes (ninos); Little & Big Boys Slide Sandals (ninos); Wonder Nation Baby Boys Fisherman Sandals (bebe nino); Wonder Nation Girls Cushioned Ankle Socks (ninas); Gerber Baby Boy or Girl Unisex Waffle Romper (unisex bebe); Crocs Toddler & Kids Crocband Sandal (ninos).',
+    'UNISEX or NO GENERO (HOME/TECH/OTHERS) - Tecnologia: iPhone 12 / iPhone 13 / iPhone SE; Lenovo Ideapad Gaming Chromebook; MSI Katana GF66 Gaming Laptop; JBL GO 2 Speaker; Apple AirPods Pro (2nd Gen); Apple Watch Series 8 / SE; Sony PlayStation 5 (and Digital Edition); Nintendo Switch Bundle; LG 86" TV / Philips 75" TV; Wireless Earbuds / Open Ear Headphones; Canon EOS Rebel T100 / KODAK camera; Samsung soundbars/headphones.',
+    'UNISEX or NO GENERO (HOME/TECH/OTHERS) - Hogar: detergents (Clorox, Gain, Laundry Sanitizer); furniture (sofa, chairs, dining chairs, plant stand); kitchen (knife sets, cookware, refrigerator, ice maker); luggage/suitcases/totes; inflatable pools; baskets/laundry/bedding.',
+    'For recipient-based requests, prioritize these items as search intents and keep recommendations aligned to recipient profile.'
+  ].join(' ');
   private readonly systemInstruction = [
     'You are a warm and proactive customer service assistant for an e-commerce store that must use function calling.',
     'Use searchProducts directly for product discovery queries without asking unnecessary clarifying questions.',
@@ -65,6 +74,7 @@ export class ChatService {
     'When user asks for product price in another currency, first fetch 2 relevant products with searchProducts and then convert each price with convertCurrencies when numeric prices are available.',
     'When user asks pure currency conversion with explicit amount and currencies (e.g. "How many Canadian Dollars are 350 Euros"), call convertCurrencies directly.',
     'For generic price questions without a target currency (e.g. "How much does a watch cost?"), provide an approximate price range based on the relevant catalog products, do not convert currency, and then show 2 products.',
+    this.recipientRecommendationGuide,
     'Always keep a customer-service tone: clear, friendly, and solution-oriented.',
     'Avoid empty responses and avoid saying you cannot help before trying tools.'
   ].join(' ');
