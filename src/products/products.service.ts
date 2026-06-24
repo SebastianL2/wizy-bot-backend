@@ -19,6 +19,15 @@ type CsvParseOptions = {
   skip_records_with_error?: boolean;
 };
 
+type RecipientProfile = 'male' | 'female' | 'kids' | 'unisex';
+
+type ProductAudience = {
+  male: boolean;
+  female: boolean;
+  kids: boolean;
+  unisex: boolean;
+};
+
 /**
  * Loads the product catalog from CSV and performs token-based search with
  * synonym expansion and relevance scoring.
@@ -57,9 +66,11 @@ export class ProductsService {
 
     const normalizedQuery = this.normalizeText(query);
     const queryTokens = this.expandTokens(this.tokenize(normalizedQuery));
+    const recipientProfile = this.detectRecipientProfile(normalizedQuery);
 
     const scoredProducts = this.products.map((product) => {
-      const score = this.scoreProduct(product, normalizedQuery, queryTokens);
+      const baseScore = this.scoreProduct(product, normalizedQuery, queryTokens);
+      const profileAdjustment = this.scoreRecipientFit(product, recipientProfile);
       const parsedPrice = this.parsePrice(product.price);
 
       return {
@@ -74,11 +85,13 @@ export class ProductsService {
         productType: product.productType,
         discount: product.discount,
         variants: product.variants,
-        score
+        score: baseScore + profileAdjustment
       };
     });
 
-    const matched = scoredProducts
+    const candidates = this.filterByRecipientProfile(scoredProducts, recipientProfile);
+
+    const matched = candidates
       .filter((product) => product.score > 0)
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
@@ -91,7 +104,7 @@ export class ProductsService {
       'No direct match found, returning fallback popular products'
     );
 
-    return scoredProducts
+    return candidates
       .sort((a, b) => this.fallbackRank(b) - this.fallbackRank(a))
       .slice(0, limit);
   }
@@ -229,6 +242,161 @@ export class ProductsService {
     const hasPrice = product.priceAmount !== null ? 2 : 0;
 
     return discountBoost + hasPrice + product.score;
+  }
+
+  /**
+   * Detects recipient profile hints in the user query (e.g. dad, mom, kids).
+   *
+   * @param normalizedQuery - Lowercase, accent-stripped query text.
+   */
+  private detectRecipientProfile(
+    normalizedQuery: string
+  ): RecipientProfile | null {
+    const malePattern =
+      /\b(dad|father|papa|pap[aá]|husband|boyfriend|brother|uncle|man|men|male|hombre)\b/;
+    const femalePattern =
+      /\b(mom|mother|mama|mam[aá]|wife|girlfriend|sister|aunt|woman|women|female|mujer|tia|t[ií]a)\b/;
+    const kidsPattern =
+      /\b(kid|kids|child|children|baby|babies|toddler|toddlers|boy|boys|girl|girls|nino|ni[ñn]o|nina|ni[ñn]a|bebe|beb[ée])\b/;
+    const unisexPattern =
+      /\b(unisex|home|technology|tech|hogar|casa|electronic|electronics)\b/;
+
+    if (kidsPattern.test(normalizedQuery)) {
+      return 'kids';
+    }
+    if (malePattern.test(normalizedQuery)) {
+      return 'male';
+    }
+    if (femalePattern.test(normalizedQuery)) {
+      return 'female';
+    }
+    if (unisexPattern.test(normalizedQuery)) {
+      return 'unisex';
+    }
+
+    return null;
+  }
+
+  /**
+   * Adds a relevance adjustment based on audience compatibility.
+   *
+   * @param product - Catalog record to evaluate.
+   * @param recipientProfile - Recipient profile inferred from query.
+   */
+  private scoreRecipientFit(
+    product: ProductRecord,
+    recipientProfile: RecipientProfile | null
+  ): number {
+    if (!recipientProfile) {
+      return 0;
+    }
+
+    const audience = this.getProductAudience(
+      product.displayTitle,
+      product.embeddingText,
+      product.productType
+    );
+
+    if (!this.isAudienceCompatible(audience, recipientProfile)) {
+      return -25;
+    }
+
+    if (
+      (recipientProfile === 'male' && audience.male) ||
+      (recipientProfile === 'female' && audience.female) ||
+      (recipientProfile === 'kids' && audience.kids) ||
+      (recipientProfile === 'unisex' && audience.unisex)
+    ) {
+      return 10;
+    }
+
+    return 2;
+  }
+
+  /**
+   * Keeps only products compatible with recipient profile.
+   *
+   * If filtering removes all products, the original set is returned to avoid
+   * empty responses.
+   *
+   * @param products - Scored products.
+   * @param recipientProfile - Recipient profile inferred from query.
+   */
+  private filterByRecipientProfile(
+    products: ProductResult[],
+    recipientProfile: RecipientProfile | null
+  ): ProductResult[] {
+    if (!recipientProfile) {
+      return products;
+    }
+
+    const filtered = products.filter((product) => {
+      const audience = this.getProductAudience(
+        product.name,
+        product.description,
+        product.productType
+      );
+      return this.isAudienceCompatible(audience, recipientProfile);
+    });
+
+    return filtered.length > 0 ? filtered : products;
+  }
+
+  /**
+   * Infers product audience tags from title, description, and category.
+   *
+   * @param title - Product title.
+   * @param description - Product searchable description.
+   * @param productType - Product category.
+   */
+  private getProductAudience(
+    title: string,
+    description: string,
+    productType: string
+  ): ProductAudience {
+    const text = this.normalizeText(`${title} ${description}`.trim());
+    const normalizedType = this.normalizeText(productType ?? '');
+
+    const male = /\b(men|mens|man|male|hombre)\b/.test(text);
+    const female =
+      /\b(women|womens|woman|female|mujer|makeup|mascara|eyeliner|eyeshadow)\b/.test(
+        text
+      );
+    const kids =
+      /\b(kid|kids|child|children|toddler|baby|infant|boy|boys|girl|girls|nino|ni[ñn]o|nina|ni[ñn]a|bebe|beb[ée])\b/.test(
+        text
+      );
+    const unisex =
+      /\bunisex\b/.test(text) ||
+      normalizedType === 'technology' ||
+      normalizedType === 'home';
+
+    return { male, female, kids, unisex };
+  }
+
+  /**
+   * Checks whether product audience aligns with the inferred recipient profile.
+   *
+   * @param audience - Inferred product audience tags.
+   * @param recipientProfile - Recipient profile inferred from query.
+   */
+  private isAudienceCompatible(
+    audience: ProductAudience,
+    recipientProfile: RecipientProfile
+  ): boolean {
+    if (recipientProfile === 'male') {
+      return !audience.female && !audience.kids;
+    }
+
+    if (recipientProfile === 'female') {
+      return !audience.male && !audience.kids;
+    }
+
+    if (recipientProfile === 'kids') {
+      return audience.kids || audience.unisex;
+    }
+
+    return audience.unisex || (!audience.male && !audience.female && !audience.kids);
   }
 
   /**

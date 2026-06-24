@@ -30,4 +30,16 @@ describe('ProductsService', () => {
     expect(result).toHaveLength(2);
     expect(result[0].name.length).toBeGreaterThan(0);
   });
+
+  it('avoids female-only products for dad gift queries', async () => {
+    const result = await service.searchProducts('I am looking for a present for my dad', 3);
+
+    expect(result).toHaveLength(3);
+    expect(result.some((product) => /mascara|women|womens/i.test(product.name))).toBe(
+      false
+    );
+    expect(result.some((product) => /men|mens|iphone|laptop|laundry/i.test(product.name))).toBe(
+      true
+    );
+  });
 });
