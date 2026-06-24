@@ -6,6 +6,15 @@ import { join } from 'node:path';
 import { ProductRecord, ProductResult } from './interfaces/product.interface';
 
 type ParsedPrice = { amount: number | null; currency: string };
+type CsvParseOptions = {
+  columns: boolean;
+  skip_empty_lines: boolean;
+  relax_quotes: boolean;
+  trim: boolean;
+  bom?: boolean;
+  relax_column_count?: boolean;
+  skip_records_with_error?: boolean;
+};
 
 @Injectable()
 export class ProductsService {
@@ -75,12 +84,30 @@ export class ProductsService {
       join(process.cwd(), 'Full Stack Test products_list.csv');
 
     const csvData = await readFile(csvPath, 'utf8');
-    const parsed = parse(csvData, {
+    const defaultOptions: CsvParseOptions = {
       columns: true,
       skip_empty_lines: true,
       relax_quotes: true,
-      trim: true
-    }) as ProductRecord[];
+      trim: true,
+      bom: true
+    };
+
+    let parsed: ProductRecord[];
+    try {
+      parsed = parse(csvData, defaultOptions) as ProductRecord[];
+    } catch (error) {
+      this.logger.warn(
+        `Strict CSV parsing failed, retrying with tolerant mode: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+
+      parsed = parse(csvData, {
+        ...defaultOptions,
+        relax_column_count: true,
+        skip_records_with_error: true
+      }) as ProductRecord[];
+    }
 
     this.products = parsed;
     this.hasLoaded = true;

@@ -36,6 +36,15 @@ export class ChatService {
   private readonly maxSessionHistoryMessages = 30;
   private readonly sessionTtlMs = 60 * 60 * 1000;
   private readonly sessionStore = new Map<string, SessionState>();
+  private readonly systemInstruction = [
+    'You are an e-commerce assistant that must use function calling.',
+    'Use searchProducts directly for product discovery queries without asking unnecessary clarifying questions.',
+    'If the user request is generic or underspecified, always provide 2 relevant products first and then ask whether they want something more specific.',
+    'When user asks for product price in another currency, first fetch 2 relevant products with searchProducts and then convert each price with convertCurrencies when numeric prices are available.',
+    'When user asks pure currency conversion with explicit amount and currencies (e.g. "How many Canadian Dollars are 350 Euros"), call convertCurrencies directly.',
+    'For generic price questions without a target currency (e.g. "How much does a watch cost?"), do not convert; return catalog prices as-is for 2 relevant products and ask for specificity.',
+    'Avoid empty responses and avoid saying you cannot help before trying tools.'
+  ].join(' ');
 
   private readonly tools: ChatCompletionTool[] = [
     {
@@ -154,6 +163,24 @@ export class ChatService {
       const toolCalls = assistantMessage.tool_calls ?? [];
 
       if (toolCalls.length === 0) {
+        const fallbackResponse = await this.buildFallbackResponse(
+          messages,
+          functionsExecuted
+        );
+        if (fallbackResponse) {
+          messages[messages.length - 1] = {
+            role: 'assistant',
+            content: fallbackResponse
+          };
+
+          return {
+            content: fallbackResponse,
+            totalTokens,
+            functionsExecuted,
+            messages
+          };
+        }
+
         return {
           content:
             assistantMessage.content ??
@@ -211,8 +238,7 @@ export class ChatService {
     return [
       {
         role: 'system',
-        content:
-          'You are an e-commerce assistant. Use tools when needed. If query is unclear, reply with a polite clarification and examples.'
+        content: this.systemInstruction
       }
     ];
   }
@@ -315,5 +341,60 @@ export class ChatService {
     return {
       error: `Function ${functionName} is not implemented`
     };
+  }
+
+  private async buildFallbackResponse(
+    messages: ChatCompletionMessageParam[],
+    functionsExecuted: string[]
+  ): Promise<string | null> {
+    if (functionsExecuted.includes('searchProducts')) {
+      return null;
+    }
+
+    const userMessage = this.getLatestUserMessage(messages);
+    if (!userMessage || !this.shouldForceProductSuggestions(userMessage)) {
+      return null;
+    }
+
+    const products = await this.productsService.searchProducts(userMessage, 2);
+    if (products.length === 0) {
+      return null;
+    }
+    functionsExecuted.push('searchProducts');
+
+    const lines = products.map((product, index) => {
+      return `${index + 1}. ${product.name} - ${product.price}. ${product.description}`;
+    });
+
+    return [
+      'I found these options for you:',
+      ...lines,
+      'Would you like something more specific (brand, budget, color, or category)?'
+    ].join('\n');
+  }
+
+  private getLatestUserMessage(messages: ChatCompletionMessageParam[]): string {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role !== 'user') {
+        continue;
+      }
+
+      if (typeof message.content === 'string') {
+        return message.content;
+      }
+    }
+
+    return '';
+  }
+
+  private shouldForceProductSuggestions(message: string): boolean {
+    const normalized = message.toLowerCase();
+    const productIntentPattern =
+      /(looking|search|find|need|gift|present|buy|price|cost|watch|phone|iphone|laptop|shoes|dress|sandals|product)/;
+    const pureConversionPattern =
+      /(how many|convert|exchange).*\d+.*(usd|eur|cop|cad|mxn|gbp)/;
+
+    return productIntentPattern.test(normalized) && !pureConversionPattern.test(normalized);
   }
 }
