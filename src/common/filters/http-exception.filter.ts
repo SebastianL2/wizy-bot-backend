@@ -33,12 +33,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
         : (payload as { message?: string | string[] }).message ??
           'Unexpected error';
 
-    this.logger.error('HTTP request failed', {
+    const errorContext = {
       method: request.method,
       path: request.url,
       statusCode,
-      message
-    });
+      message,
+      errorName: exception instanceof Error ? exception.name : 'UnknownError',
+      errorMessage: exception instanceof Error ? exception.message : undefined,
+      stack: exception instanceof Error ? exception.stack : undefined
+    };
+
+    this.logger.error('HTTP request failed', errorContext);
 
     response.status(statusCode).json({
       statusCode,

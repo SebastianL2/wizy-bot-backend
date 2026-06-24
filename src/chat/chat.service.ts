@@ -9,6 +9,7 @@ import {
   ChatCompletionMessageParam,
   ChatCompletionTool
 } from 'openai/resources/chat/completions';
+import { randomUUID } from 'node:crypto';
 import { CurrencyService } from '../currency/currency.service';
 import { ProductsService } from '../products/products.service';
 import { ChatResponseDto } from './dto/chat-response.dto';
@@ -18,6 +19,12 @@ interface OpenAiMessageResult {
   content: string;
   totalTokens: number;
   functionsExecuted: string[];
+  messages: ChatCompletionMessageParam[];
+}
+
+interface SessionState {
+  messages: ChatCompletionMessageParam[];
+  updatedAt: number;
 }
 
 @Injectable()
@@ -26,6 +33,9 @@ export class ChatService {
   private readonly openai: OpenAI;
   private readonly model: string;
   private readonly maxIterations = 5;
+  private readonly maxSessionHistoryMessages = 30;
+  private readonly sessionTtlMs = 60 * 60 * 1000;
+  private readonly sessionStore = new Map<string, SessionState>();
 
   private readonly tools: ChatCompletionTool[] = [
     {
@@ -81,31 +91,50 @@ export class ChatService {
   }
 
   async processMessage(payload: SendMessageDto): Promise<ChatResponseDto> {
-    const result = await this.runFunctionCallingLoop(payload.message);
+    this.logger.log(`Processing chat message: "${payload.message}"`);
 
-    return {
-      response: result.content,
-      metadata: {
-        totalTokens: result.totalTokens,
-        functionsExecuted: result.functionsExecuted
-      }
-    };
+    try {
+      const sessionId = this.resolveSessionId(payload.sessionId);
+      const initialMessages = this.getSessionMessages(sessionId);
+      const messages: ChatCompletionMessageParam[] = [
+        ...initialMessages,
+        { role: 'user', content: payload.message }
+      ];
+      const result = await this.runFunctionCallingLoop(messages);
+
+      this.persistSessionMessages(sessionId, result.messages);
+
+      return {
+        response: result.content,
+        metadata: {
+          totalTokens: result.totalTokens,
+          functionsExecuted: result.functionsExecuted,
+          sessionId
+        }
+      };
+    } catch (error) {
+      this.logger.error('Failed to process chat message', {
+        message: payload.message,
+        model: this.model,
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        errorMessage: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      throw error;
+    }
   }
 
-  private async runFunctionCallingLoop(message: string): Promise<OpenAiMessageResult> {
-    const messages: ChatCompletionMessageParam[] = [
-      {
-        role: 'system',
-        content:
-          'You are an e-commerce assistant. Use tools when needed. If query is unclear, reply with a polite clarification and examples.'
-      },
-      { role: 'user', content: message }
-    ];
-
+  private async runFunctionCallingLoop(
+    messages: ChatCompletionMessageParam[]
+  ): Promise<OpenAiMessageResult> {
     let totalTokens = 0;
     const functionsExecuted: string[] = [];
 
     for (let iteration = 1; iteration <= this.maxIterations; iteration += 1) {
+      this.logger.debug(
+        `OpenAI request iteration ${iteration}/${this.maxIterations} (model=${this.model})`
+      );
+
       const completion = await this.openai.chat.completions.create({
         model: this.model,
         temperature: 0.2,
@@ -130,13 +159,19 @@ export class ChatService {
             assistantMessage.content ??
             'I could not understand your request. Try asking for a product search or currency conversion.',
           totalTokens,
-          functionsExecuted
+          functionsExecuted,
+          messages
         };
       }
 
       for (const toolCall of toolCalls) {
         const functionName = toolCall.function.name;
         const args = this.parseToolArguments(toolCall.function.arguments);
+
+        this.logger.log(
+          `Tool call requested: ${functionName} with args ${JSON.stringify(args)}`
+        );
+
         const result = await this.executeTool(functionName, args);
 
         functionsExecuted.push(functionName);
@@ -152,8 +187,70 @@ export class ChatService {
       content:
         'I could not complete the request after several attempts. Please try again with a clearer message.',
       totalTokens,
-      functionsExecuted
+      functionsExecuted,
+      messages
     };
+  }
+
+  private resolveSessionId(sessionId?: string): string {
+    if (sessionId && sessionId.trim().length > 0) {
+      return sessionId.trim();
+    }
+
+    return randomUUID();
+  }
+
+  private getSessionMessages(sessionId: string): ChatCompletionMessageParam[] {
+    this.cleanupExpiredSessions();
+
+    const existingSession = this.sessionStore.get(sessionId);
+    if (existingSession) {
+      return [...existingSession.messages];
+    }
+
+    return [
+      {
+        role: 'system',
+        content:
+          'You are an e-commerce assistant. Use tools when needed. If query is unclear, reply with a polite clarification and examples.'
+      }
+    ];
+  }
+
+  private persistSessionMessages(
+    sessionId: string,
+    messages: ChatCompletionMessageParam[]
+  ): void {
+    const trimmedMessages = this.trimSessionHistory(messages);
+    this.sessionStore.set(sessionId, {
+      messages: trimmedMessages,
+      updatedAt: Date.now()
+    });
+  }
+
+  private trimSessionHistory(
+    messages: ChatCompletionMessageParam[]
+  ): ChatCompletionMessageParam[] {
+    if (messages.length <= this.maxSessionHistoryMessages) {
+      return [...messages];
+    }
+
+    const [systemMessage, ...conversation] = messages;
+    const trimmedConversation = conversation.slice(
+      -(this.maxSessionHistoryMessages - 1)
+    );
+
+    return [systemMessage, ...trimmedConversation];
+  }
+
+  private cleanupExpiredSessions(): void {
+    const now = Date.now();
+
+    for (const [sessionId, session] of this.sessionStore.entries()) {
+      if (now - session.updatedAt > this.sessionTtlMs) {
+        this.sessionStore.delete(sessionId);
+      }
+    }
   }
 
   private parseToolArguments(rawArgs: string): Record<string, unknown> {
@@ -171,6 +268,23 @@ export class ChatService {
   ): Promise<unknown> {
     this.logger.debug(`Executing tool: ${functionName}`);
 
+    try {
+      return await this.runTool(functionName, args);
+    } catch (error) {
+      this.logger.error(`Tool execution failed: ${functionName}`, {
+        args,
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        errorMessage: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      throw error;
+    }
+  }
+
+  private async runTool(
+    functionName: string,
+    args: Record<string, unknown>
+  ): Promise<unknown> {
     if (functionName === 'searchProducts') {
       const query = String(args.query ?? '');
       const products = await this.productsService.searchProducts(query, 2);

@@ -25,6 +25,13 @@ export class ChatController {
       search: {
         summary: 'Search related products',
         value: { message: 'Estoy buscando un telefono' }
+      },
+      conversation: {
+        summary: 'Continue a previous conversation',
+        value: {
+          sessionId: 'f17d7ad1-9c25-4ec8-892e-09f46f2f9af6',
+          message: 'How much is it in euros?'
+        }
       }
     }
   })

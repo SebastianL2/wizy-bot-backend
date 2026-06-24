@@ -13,6 +13,12 @@ class ChatMetadataDto {
     description: 'Functions executed during the tool-calling loop'
   })
   functionsExecuted?: string[];
+
+  @ApiPropertyOptional({
+    example: 'f17d7ad1-9c25-4ec8-892e-09f46f2f9af6',
+    description: 'Conversation session id to continue chat context'
+  })
+  sessionId?: string;
 }
 
 export class ChatResponseDto {

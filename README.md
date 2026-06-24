@@ -5,6 +5,7 @@ REST API built with NestJS + TypeScript that provides an intelligent chatbot wit
 ## Features
 
 - `POST /api/chat` endpoint that receives `{ "message": "string" }`
+- Optional `sessionId` to keep conversation context across requests
 - OpenAI function-calling loop with multiple tool turns
 - Product search tool over `Full Stack Test products_list.csv`
 - Currency conversion tool with Open Exchange Rates API
@@ -55,7 +56,10 @@ npm run start:dev
 - Body:
 
 ```json
-{ "message": "string" }
+{
+  "message": "string",
+  "sessionId": "optional-string"
+}
 ```
 
 - Response:
@@ -65,10 +69,13 @@ npm run start:dev
   "response": "string",
   "metadata": {
     "totalTokens": 120,
-    "functionsExecuted": ["searchProducts"]
+    "functionsExecuted": ["searchProducts"],
+    "sessionId": "f17d7ad1-9c25-4ec8-892e-09f46f2f9af6"
   }
 }
 ```
+
+Reuse the same `sessionId` value in the next request to continue the same conversation.
 
 ## cURL Examples
 

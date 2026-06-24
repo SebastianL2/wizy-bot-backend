@@ -16,7 +16,11 @@ async function bootstrap(): Promise<void> {
     })
   );
   app.useGlobalFilters(new HttpExceptionFilter());
-
+  app.enableCors({
+    origin: true, // o 'http://localhost:5173'
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+  });
   const swaggerConfig = new DocumentBuilder()
     .setTitle('WizBot Chat API')
     .setDescription('REST API for chatbot with OpenAI function calling')
