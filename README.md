@@ -7,7 +7,7 @@ REST API built with NestJS + TypeScript that provides an intelligent chatbot wit
 - `POST /api/chat` endpoint that receives `{ "message": "string" }`
 - Optional `sessionId` to keep conversation context across requests
 - OpenAI function-calling loop with multiple tool turns
-- Product search tool over `Full Stack Test products_list.csv`
+- Product search tool over `full_stack_test_products_list_rmk.csv`
 - Currency conversion tool with Open Exchange Rates API
 - Exchange rate cache up to 1 hour
 - Global validation, structured error handling, and Swagger docs
@@ -16,6 +16,7 @@ REST API built with NestJS + TypeScript that provides an intelligent chatbot wit
 
 - Node.js v18+
 - npm v9+ (or Yarn equivalent)
+- Docker + Docker Compose (optional, for containerized run)
 - OpenAI API key
 - Open Exchange Rates App ID
 
@@ -29,11 +30,11 @@ cp .env.example .env
 
 Variables:
 
-- `PORT`: HTTP server port (`3000` default)
+- `PORT`: HTTP server port (`3005` default)
 - `OPENAI_API_KEY`: OpenAI API key
 - `OPENAI_MODEL`: OpenAI model for Chat Completions
 - `OPEN_EXCHANGE_APP_ID`: App ID from Open Exchange Rates
-- `PRODUCTS_CSV_PATH`: CSV path (`./Full Stack Test products_list.csv` by default)
+- `PRODUCTS_CSV_PATH`: CSV path (`./full_stack_test_products_list_rmk.csv` by default)
 
 ## Installation & Run
 
@@ -43,15 +44,42 @@ npm run build
 npm run start:dev
 ```
 
+Default local port: `3005`
+
+## Run with Docker (recommended)
+
+1. Prepare env:
+
+```bash
+cp .env.example .env
+```
+
+2. Build and run backend:
+
+```bash
+docker-compose up --build
+```
+
+3. Stop services:
+
+```bash
+docker-compose down
+```
+
+Services started by compose:
+
+- Backend: `http://localhost:3005`
+- Swagger: `http://localhost:3005/api/docs`
+
 ## API Documentation (Swagger)
 
-- URL: [http://localhost:3000/api/docs](http://localhost:3000/api/docs)
+- URL: [http://localhost:3005/api/docs](http://localhost:3005/api/docs)
 - Includes request/response schemas and possible error codes
 
 ## Main Endpoint
 
 - Method: `POST`
-- URL: `http://localhost:3000/api/chat`
+- URL: `http://localhost:3005/api/chat`
 - Headers: `Content-Type: application/json`
 - Body:
 
@@ -87,25 +115,25 @@ Reuse the same `sessionId` value in the next request to continue the same conver
 ## Reset Session Endpoint
 
 - Method: `DELETE`
-- URL: `http://localhost:3000/api/chat/:sessionId`
+- URL: `http://localhost:3005/api/chat/:sessionId`
 - Purpose: manually clear stored conversation history for that session
 
 Example:
 
 ```bash
-curl -X DELETE http://localhost:3000/api/chat/f17d7ad1-9c25-4ec8-892e-09f46f2f9af6
+curl -X DELETE http://localhost:3005/api/chat/f17d7ad1-9c25-4ec8-892e-09f46f2f9af6
 ```
 
 ## cURL Examples
 
 ```bash
-curl -X POST http://localhost:3000/api/chat \
+curl -X POST http://localhost:3005/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Estoy buscando un teléfono"}'
 ```
 
 ```bash
-curl -X POST http://localhost:3000/api/chat \
+curl -X POST http://localhost:3005/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "¿Cuál es el precio del iPhone en Euros?"}'
 ```

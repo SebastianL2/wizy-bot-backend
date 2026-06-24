@@ -1,0 +1,14 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wizbot-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: 3005
+      PRODUCTS_CSV_PATH: ./full_stack_test_products_list_rmk.csv
+    ports:
+      - "3005:3005"
