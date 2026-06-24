@@ -1,0 +1,4 @@
+displayTitle,embeddingText,url,imageUrl,productType,discount,price,variants,createDate
+iPhone 12,"iPhone smartphone celular",https://example.com/iphone,https://example.com/iphone.png,Technology,1,"900.0 USD",,"2024-04-30 16:18:52.431429"
+MSI Katana GF66 Gaming Laptop,"Gaming laptop technology",https://example.com/laptop,https://example.com/laptop.png,Technology,1,"1500.0 USD",,"2024-04-30 16:18:52.468501"
+Laundry Sanitizer,"Laundry cleaning home",https://example.com/laundry,https://example.com/laundry.png,Home,1,"9.0 USD",,"2024-04-30 16:18:57.792520"
