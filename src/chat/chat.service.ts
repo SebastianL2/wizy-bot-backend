@@ -65,6 +65,8 @@ export class ChatService {
   private readonly maxIterations = 5;
   private readonly maxSessionHistoryMessages = 30;
   private readonly sessionTtlMs = 60 * 60 * 1000;
+  private readonly searchCandidateLimit = 10;
+  private readonly responseProductLimit = 2;
   private readonly sessionStore = new Map<string, SessionState>();
   private readonly recipientRecommendationGuide = [
     'Recipient recommendation guide (use this when user asks products for someone like dad, mom, aunt, sister, kids, etc.):',
@@ -79,7 +81,8 @@ export class ChatService {
     'You are a warm and proactive customer service assistant for an e-commerce store that must use function calling.',
     'Use searchProducts directly for product discovery queries without asking unnecessary clarifying questions.',
     'If the user request is generic or underspecified, always provide 2 relevant products first and then ask whether they want something more specific.',
-    'When user asks for product price in another currency, first fetch 2 relevant products with searchProducts and then convert each price with convertCurrencies when numeric prices are available.',
+    'searchProducts returns up to 10 catalog candidates. Review all candidates and recommend exactly 2 best matches to the user, mentioning their exact titles.',
+    'When user asks for product price in another currency, first fetch catalog candidates with searchProducts, pick the 2 best matches, and then convert each price with convertCurrencies when numeric prices are available.',
     'When user asks pure currency conversion with explicit amount and currencies (e.g. "How many Canadian Dollars are 350 Euros"), call convertCurrencies directly.',
     'For generic price questions without a target currency (e.g. "How much does a watch cost?"), provide an approximate price range based on the relevant catalog products, do not convert currency, and then show 2 products.',
     this.recipientRecommendationGuide,
@@ -93,7 +96,7 @@ export class ChatService {
       function: {
         name: 'searchProducts',
         description:
-          'Search related products from catalog and return top matches with name, description and price',
+          'Search related products from catalog and return up to 10 ranked candidates with name, description and price. You must pick exactly 2 to recommend.',
         parameters: {
           type: 'object',
           properties: {
@@ -231,7 +234,7 @@ export class ChatService {
   ): Promise<OpenAiMessageResult> {
     let totalTokens = 0;
     const functionsExecuted: string[] = [];
-    let structuredProducts: ProductOutput[] | undefined;
+    let productCandidates: ProductOutput[] | undefined;
     const structuredConversions: CurrencyConversionResult[] = [];
 
     for (let iteration = 1; iteration <= this.maxIterations; iteration += 1) {
@@ -279,14 +282,19 @@ export class ChatService {
           };
         }
 
+        const assistantContent =
+          assistantMessage.content ??
+          'I could not understand your request. Try asking for a product search or currency conversion.';
+
         return {
-          content:
-            assistantMessage.content ??
-            'I could not understand your request. Try asking for a product search or currency conversion.',
+          content: assistantContent,
           totalTokens,
           functionsExecuted,
           messages,
-          products: structuredProducts,
+          products: this.selectProductsForResponse(
+            productCandidates,
+            assistantContent
+          ),
           conversions:
             structuredConversions.length > 0 ? structuredConversions : undefined
         };
@@ -307,7 +315,7 @@ export class ChatService {
         if (functionName === 'searchProducts') {
           const parsedProducts = this.extractProductOutput(result);
           if (parsedProducts.length > 0) {
-            structuredProducts = parsedProducts;
+            productCandidates = parsedProducts;
           }
         }
 
@@ -332,9 +340,65 @@ export class ChatService {
       totalTokens,
       functionsExecuted,
       messages,
-      products: structuredProducts,
+      products: this.selectProductsForResponse(
+        productCandidates,
+        'I could not complete the request after several attempts. Please try again with a clearer message.'
+      ),
       conversions: structuredConversions.length > 0 ? structuredConversions : undefined
     };
+  }
+
+  /**
+   * Picks the products to expose in the API response from search candidates.
+   *
+   * Prefers titles explicitly mentioned by the assistant; fills remaining
+   * slots with top-ranked candidates when fewer than two are referenced.
+   *
+   * @param candidates - Full candidate list returned by searchProducts.
+   * @param assistantMessage - Final assistant text for title matching.
+   */
+  private selectProductsForResponse(
+    candidates: ProductOutput[] | undefined,
+    assistantMessage: string
+  ): ProductOutput[] | undefined {
+    if (!candidates || candidates.length === 0) {
+      return undefined;
+    }
+
+    if (candidates.length <= this.responseProductLimit) {
+      return candidates.slice(0, this.responseProductLimit);
+    }
+
+    const normalizedMessage = assistantMessage.toLowerCase();
+    const selected: ProductOutput[] = [];
+    const sortedByTitleLength = [...candidates].sort(
+      (left, right) => right.title.length - left.title.length
+    );
+
+    for (const product of sortedByTitleLength) {
+      if (selected.length >= this.responseProductLimit) {
+        break;
+      }
+
+      if (
+        normalizedMessage.includes(product.title.toLowerCase()) &&
+        !selected.some((entry) => entry.title === product.title)
+      ) {
+        selected.push(product);
+      }
+    }
+
+    for (const product of candidates) {
+      if (selected.length >= this.responseProductLimit) {
+        break;
+      }
+
+      if (!selected.some((entry) => entry.title === product.title)) {
+        selected.push(product);
+      }
+    }
+
+    return selected.slice(0, this.responseProductLimit);
   }
 
   /**
@@ -475,7 +539,10 @@ export class ChatService {
   ): Promise<unknown> {
     if (functionName === 'searchProducts') {
       const query = String(args.query ?? '');
-      const products = await this.productsService.searchProducts(query, 2);
+      const products = await this.productsService.searchProducts(
+        query,
+        this.searchCandidateLimit
+      );
       if (products.length === 0) {
         return {
           message: 'No related products found'
@@ -483,7 +550,9 @@ export class ChatService {
       }
 
       return {
-        products: this.mapProductsForOutput(products)
+        products: this.mapProductsForOutput(products),
+        instruction:
+          'Review all candidates and recommend exactly 2 best matches to the user using their exact titles.'
       };
     }
 
@@ -637,12 +706,18 @@ export class ChatService {
       return null;
     }
 
-    const products = await this.productsService.searchProducts(userMessage, 2);
+    const products = await this.productsService.searchProducts(
+      userMessage,
+      this.searchCandidateLimit
+    );
     if (products.length === 0) {
       return null;
     }
     functionsExecuted.push('searchProducts');
-    const productOutputs = this.mapProductsForOutput(products);
+    const productOutputs = this.mapProductsForOutput(products).slice(
+      0,
+      this.responseProductLimit
+    );
 
     return {
       message:

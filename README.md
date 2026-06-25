@@ -149,13 +149,81 @@ curl -X POST http://localhost:3005/api/chat \
 
 ## Testing
 
+The test suite lives under `test/` and uses **Jest**. Tests are split into **unit tests** (`*.spec.ts`) and **integration tests** (`*.int-spec.ts`).
+
+### Commands
+
 ```bash
+# Run all unit tests
 npm run test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run integration tests (HTTP layer)
 npm run test:e2e
+
+# Run unit tests with coverage report
 npm run test:cov
 ```
 
-Coverage threshold is set to **70%** globally.
+Run a single file:
+
+```bash
+npm run test -- chat.service.spec.ts
+npm run test -- products.service.spec.ts
+npm run test:e2e -- chat.controller.int-spec.ts
+```
+
+### Test structure
+
+```text
+test/
+├── chat.service.spec.ts          # Unit tests for ChatService
+├── products.service.spec.ts      # Unit tests for ProductsService
+├── currency.service.spec.ts      # Unit tests for CurrencyService
+├── chat.controller.int-spec.ts   # Integration tests for ChatController
+├── jest-e2e.json                 # Jest config for integration tests
+└── fixtures/
+    └── products.csv              # Minimal product catalog for unit tests
+```
+
+### Unit tests
+
+| File | Service | What it validates |
+|------|---------|-------------------|
+| `chat.service.spec.ts` | `ChatService` | OpenAI function-calling flow (mocked), product search with up to 10 candidates, selection of 2 products for the response, currency conversion on product prices, and approximate price range messages |
+| `products.service.spec.ts` | `ProductsService` | Product search by query, fallback when no matches, recipient-based filtering (e.g. dad gift queries exclude female-only products) |
+| `currency.service.spec.ts` | `CurrencyService` | USD → EUR conversion using mocked Open Exchange Rates API, stale-cache fallback when the API fails |
+
+Unit tests mock external dependencies (OpenAI, axios, CSV path) so they run offline and do not require API keys.
+
+### Integration tests
+
+| File | Scope | What it validates |
+|------|-------|-------------------|
+| `chat.controller.int-spec.ts` | `ChatController` | `POST /api/chat` returns 200 with a valid body, empty `message` returns 400, `DELETE /api/chat/:sessionId` resets session |
+
+Integration tests boot a NestJS app with a mocked `ChatService` and use **supertest** against the HTTP layer (validation pipes and exception filters included).
+
+### Fixtures
+
+`test/fixtures/products.csv` is a small catalog used by `ProductsService` unit tests. It includes sample Technology, Home, Clothing, and Makeup products so search, fallback, and recipient-profile logic can be tested without loading the full production CSV.
+
+### Coverage
+
+Coverage is collected from `src/**/*.ts`, excluding `main.ts`, `*.module.ts`, and DTO files.
+
+Thresholds (see `package.json` → `jest.coverageThreshold`):
+
+| Metric | Minimum |
+|--------|---------|
+| Branches | 40% |
+| Functions | 70% |
+| Lines | 70% |
+| Statements | 70% |
+
+Report output: `coverage/` (generated after `npm run test:cov`).
 
 ## How to get API keys
 

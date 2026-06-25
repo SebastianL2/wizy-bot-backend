@@ -134,7 +134,7 @@ describe('ChatService', () => {
       discount: '1',
       variants: 'Capacity (64gb, 128gb)'
     });
-    expect(productsService.searchProducts).toHaveBeenCalledWith('iphone', 2);
+    expect(productsService.searchProducts).toHaveBeenCalledWith('iphone', 10);
     expect(result.metadata?.functionsExecuted).toContain('searchProducts');
   });
 
